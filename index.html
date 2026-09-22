@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AppleMC Bot Manager</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: #0d0d0d;
+    color: #e0e0e0;
+    font-family: 'Courier New', monospace;
+    padding: 20px;
+    min-height: 100vh;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+    border-bottom: 1px solid #222;
+    padding-bottom: 16px;
+  }
+
+  header h1 { color: #4caf50; font-size: 1.3rem; }
+  header .server { color: #666; font-size: 0.8rem; }
+
+  .grid {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 16px;
+  }
+
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: #141414;
+    border: 1px solid #222;
+    border-radius: 6px;
+    padding: 16px;
+    margin-bottom: 16px;
+  }
+
+  .panel h2 {
+    color: #81c784;
+    font-size: 0.85rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 14px;
+  }
+
+  input, select {
+    width: 100%;
+    background: #0d0d0d;
+    border: 1px solid #333;
+    color: #e0e0e0;
+    padding: 8px 10px;
+    border-radius: 4px;
+    font-family: inherit;
+    font-size: 0.85rem;
+    margin-bottom: 10px;
+  }
+
+  input:focus, select:focus { outline: none; border-color: #4caf50; }
+
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+
+  button {
+    background: #1b5e20;
+    color: #e0e0e0;
+    border: none;
+    padding: 8px 14px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.82rem;
+    transition: background 0.15s;
+  }
+
+  button:hover { background: #2e7d32; }
+  button.danger { background: #7f0000; }
+  button.danger:hover { background: #c62828; }
+  button.secondary { background: #1a1a2e; border: 1px solid #333; }
+  button.secondary:hover { background: #263238; }
+  button.sm { padding: 4px 10px; font-size: 0.75rem; }
+
+  /* ── Account Table ── */
+  .account-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+
+  .account-table th {
+    text-align: left;
+    color: #546e7a;
+    padding: 6px 10px;
+    border-bottom: 1px solid #1e1e1e;
+    font-weight: normal;
+    text-transform: uppercase;
+    font-size: 0.72rem;
+    letter-spacing: 0.5px;
+  }
+
+  .account-table td {
+    padding: 8px 10px;
+    border-bottom: 1px solid #1a1a1a;
+    vertical-align: middle;
+  }
+
+  .account-table tr:hover td { background: #181818; }
+
+  .dot {
+    display: inline-block;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    margin-right: 6px;
+  }
+
+  .dot.online  { background: #4caf50; box-shadow: 0 0 6px #4caf5088; }
+  .dot.offline { background: #444; }
+  .dot.connecting { background: #ffc107; box-shadow: 0 0 6px #ffc10788; animation: pulse 1s infinite; }
+  .dot.kicked  { background: #ef5350; }
+
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+  .status-text.online  { color: #66bb6a; }
+  .status-text.offline { color: #546e7a; }
+  .status-text.connecting { color: #ffc107; }
+  .status-text.kicked  { color: #ef5350; }
+
+  .username { color: #b2dfdb; font-weight: bold; }
+  .password { color: #555; font-size: 0.75rem; }
+
+  /* ── Log box ── */
+  .log-box {
+    background: #080808;
+    border: 1px solid #1e1e1e;
+    border-radius: 4px;
+    padding: 10px;
+    height: 200px;
+    overflow-y: auto;
+    font-size: 0.75rem;
+    color: #607d8b;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+
+  /* ── Stats bar ── */
+  .stats {
+    display: flex;
+    gap: 20px;
+    margin-bottom: 16px;
+    flex-wrap: wrap;
+  }
+
+  .stat {
+    background: #141414;
+    border: 1px solid #222;
+    border-radius: 6px;
+    padding: 10px 18px;
+    text-align: center;
+  }
+
+  .stat .val { font-size: 1.5rem; color: #4caf50; font-weight: bold; }
+  .stat .lbl { font-size: 0.7rem; color: #555; margin-top: 2px; }
+
+  .stat.orange .val { color: #ffa726; }
+  .stat.red .val    { color: #ef5350; }
+  .stat.blue .val   { color: #42a5f5; }
+
+  /* ── Top controls ── */
+  .top-controls {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    margin-bottom: 12px;
+    flex-wrap: wrap;
+  }
+
+  .top-controls input[type=number] { width: 80px; margin: 0; }
+
+  #apiKeyInput { margin-bottom: 0; }
+
+  .refresh-badge {
+    font-size: 0.7rem;
+    color: #555;
+    margin-left: auto;
+  }
+
+  .empty { color: #333; text-align: center; padding: 20px; font-size: 0.85rem; }
+
+  /* ── Proxy stats block ── */
+  #proxyStats {
+    font-size: 0.78rem;
+    color: #546e7a;
+    line-height: 2;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <h1>⛏ AppleMC Bot Manager</h1>
+    <div class="server">play.applemc.fun · password: 231182</div>
+  </div>
+</header>
+
+<!-- Stats -->
+<div class="stats">
+  <div class="stat">
+    <div class="val" id="statTotal">0</div>
+    <div class="lbl">Total Accounts</div>
+  </div>
+  <div class="stat">
+    <div class="val" id="statOnline">0</div>
+    <div class="lbl">Online</div>
+  </div>
+  <div class="stat orange">
+    <div class="val" id="statConnecting">0</div>
+    <div class="lbl">Connecting</div>
+  </div>
+  <div class="stat red">
+    <div class="val" id="statOffline">0</div>
+    <div class="lbl">Offline / Kicked</div>
+  </div>
+  <div class="stat blue">
+    <div class="val" id="statProxyPool">—</div>
+    <div class="lbl">Residential Proxies</div>
+  </div>
+</div>
+
+<div class="grid">
+
+  <!-- Left: controls -->
+  <div>
+    <div class="panel">
+      <h2>Admin Key</h2>
+      <input id="apiKeyInput" type="password" placeholder="Leave blank if not set">
+    </div>
+
+    <!-- ── Proxy Panel ── -->
+    <div class="panel">
+      <h2>Proxy — Webshare Auto-Fetch</h2>
+
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">
+        Webshare API Key (residential only)
+      </label>
+      <input id="wsApiKey" type="password" placeholder="Token from webshare.io dashboard">
+
+      <div class="btn-row" style="margin-bottom:4px;">
+        <button onclick="saveProxyKey()">💾 Save &amp; Fetch</button>
+        <button class="secondary" onclick="refreshProxyStats()">↻ Stats</button>
+      </div>
+
+      <div id="proxyStats">No proxy data yet.</div>
+    </div>
+
+    <div class="panel">
+      <h2>Launch Bots</h2>
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">How many bots to create?</label>
+      <input id="botCount" type="number" value="1" min="1" max="20" style="margin-bottom:10px;">
+      <div class="btn-row">
+        <button onclick="createBots()">🚀 Launch</button>
+        <button class="danger" onclick="killAll()">☠ Kill All</button>
+        <button class="secondary" onclick="refresh()">↻ Refresh</button>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Send Chat</h2>
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">Bot username</label>
+      <input id="chatId" placeholder="Bot username (ID)">
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">Message</label>
+      <input id="chatMsg" placeholder="Message to send" onkeydown="if(event.key==='Enter')sendChat()">
+      <button onclick="sendChat()">Send</button>
+    </div>
+
+    <div class="panel">
+      <h2>Bot Logs</h2>
+      <input id="logId" placeholder="Bot username to view logs">
+      <button onclick="fetchLogs()" style="margin-bottom:10px;">View Logs</button>
+      <div class="log-box" id="logBox">Select a bot and click View Logs.</div>
+    </div>
+  </div>
+
+  <!-- Right: account table -->
+  <div>
+    <div class="panel" style="padding:0;overflow:hidden;">
+      <div style="padding:14px 16px 10px;border-bottom:1px solid #1a1a1a;display:flex;align-items:center;">
+        <span style="color:#81c784;font-size:0.85rem;text-transform:uppercase;letter-spacing:1px;">Account List</span>
+        <span class="refresh-badge" id="lastRefresh">–</span>
+      </div>
+
+      <div style="overflow-x:auto;">
+        <table class="account-table" id="accountTable">
+          <thead>
+            <tr>
+              <th>Status</th>
+              <th>Username</th>
+              <th>Password</th>
+              <th>Uptime</th>
+              <th>Reconnects</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody id="accountBody">
+            <tr><td colspan="6" class="empty">No accounts yet — launch some bots.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const key = () => document.getElementById('apiKeyInput').value;
+  const H   = () => ({ 'Content-Type': 'application/json', 'x-admin-key': key() });
+
+  function dotClass(status) {
+    if (!status) return 'offline';
+    if (status.startsWith('online')) return 'online';
+    if (status === 'connecting' || status.startsWith('reconnecting')) return 'connecting';
+    if (status === 'kicked') return 'kicked';
+    return 'offline';
+  }
+
+  function fmtUptime(s) {
+    if (!s || s < 0) return '–';
+    const h = Math.floor(s / 3600);
+    const m = Math.floor((s % 3600) / 60);
+    const sec = s % 60;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${sec}s`;
+    return `${sec}s`;
+  }
+
+  // ── Proxy ──────────────────────────────────────────────────────
+  async function saveProxyKey() {
+    const wsKey = document.getElementById('wsApiKey').value.trim();
+    if (!wsKey) return alert('Paste your Webshare API key first');
+
+    const r = await fetch('/proxy/init', {
+      method:  'POST',
+      headers: H(),
+      body:    JSON.stringify({ apiKey: wsKey }),
+    });
+    const d = await r.json();
+    if (d.error) return alert('Proxy init error: ' + d.error);
+
+    document.getElementById('proxyStats').innerHTML =
+      `<span style="color:#4caf50">●</span> Pool seeded — <b style="color:#4caf50">${d.pool}</b> verified residential proxies ready`;
+
+    document.getElementById('statProxyPool').textContent = d.pool;
+    setTimeout(refreshProxyStats, 8000);
+  }
+
+  async function refreshProxyStats() {
+    try {
+      const r = await fetch('/proxy/stats', { headers: H() });
+      if (!r.ok) return;
+      const d = await r.json();
+      if (!d.enabled) return;
+
+      document.getElementById('proxyStats').innerHTML =
+        `<span style="color:#4caf50">●</span> Verified residential: <b style="color:#4caf50">${d.pool}</b><br>` +
+        `Total fetched: ${d.total} &nbsp;|&nbsp; Residential: ${d.residential}<br>` +
+        `Failed verification: <span style="color:#ef5350">${d.failed}</span>`;
+
+      document.getElementById('statProxyPool').textContent = d.pool;
+    } catch (_) {}
+  }
+
+  // ── Bot controls ───────────────────────────────────────────────
+  async function createBots() {
+    const count = parseInt(document.getElementById('botCount').value) || 1;
+    const r = await fetch('/bot/create', { method: 'POST', headers: H(), body: JSON.stringify({ count }) });
+    const d = await r.json();
+    if (d.error) return alert(d.error);
+    refresh();
+  }
+
+  async function killBot(id) {
+    await fetch(`/bot/${encodeURIComponent(id)}/kill`, { method: 'POST', headers: H() });
+    refresh();
+  }
+
+  async function killAll() {
+    if (!confirm('Kill all bots?')) return;
+    await fetch('/killall', { method: 'POST', headers: H() });
+    refresh();
+  }
+
+  async function sendChat() {
+    const id  = document.getElementById('chatId').value.trim();
+    const msg = document.getElementById('chatMsg').value.trim();
+    if (!id || !msg) return alert('Need bot ID and message');
+    const r = await fetch(`/bot/${encodeURIComponent(id)}/chat`, {
+      method: 'POST', headers: H(), body: JSON.stringify({ message: msg })
+    });
+    const d = await r.json();
+    if (d.error) alert(d.error);
+    document.getElementById('chatMsg').value = '';
+  }
+
+  async function fetchLogs(id) {
+    id = id || document.getElementById('logId').value.trim();
+    if (!id) return;
+    const r = await fetch(`/bot/${encodeURIComponent(id)}/logs`, { headers: H() });
+    const d = await r.json();
+    const box = document.getElementById('logBox');
+    if (d.error) { box.textContent = d.error; return; }
+    box.textContent = (d.logs || []).join('\n');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  async function refresh() {
+    const r = await fetch('/accounts', { headers: H() });
+    const accounts = await r.json();
+
+    const total      = accounts.length;
+    const online     = accounts.filter(a => a.status.startsWith('online')).length;
+    const connecting = accounts.filter(a => a.status === 'connecting' || a.status.startsWith('reconnecting')).length;
+    const offline    = total - online - connecting;
+
+    document.getElementById('statTotal').textContent      = total;
+    document.getElementById('statOnline').textContent     = online;
+    document.getElementById('statConnecting').textContent = connecting;
+    document.getElementById('statOffline').textContent    = Math.max(0, offline);
+    document.getElementById('lastRefresh').textContent    = 'Updated ' + new Date().toLocaleTimeString();
+
+    const tbody = document.getElementById('accountBody');
+    if (!accounts.length) {
+      tbody.innerHTML = '<tr><td colspan="6" class="empty">No accounts yet — launch some bots.</td></tr>';
+      return;
+    }
+
+    const order = { 'online': 0, 'connecting': 1, 'offline': 2 };
+    accounts.sort((a, b) => {
+      const aO = order[dotClass(a.status)] ?? 2;
+      const bO = order[dotClass(b.status)] ?? 2;
+      return aO - bO;
+    });
+
+    tbody.innerHTML = accounts.map(a => {
+      const dc = dotClass(a.status);
+      return `
+        <tr>
+          <td>
+            <span class="dot ${dc}"></span>
+            <span class="status-text ${dc}">${a.status}</span>
+          </td>
+          <td class="username">${a.username}</td>
+          <td class="password">${a.password}</td>
+          <td>${fmtUptime(a.uptime || 0)}</td>
+          <td style="color:#546e7a">${a.reconnects}</td>
+          <td>
+            <div style="display:flex;gap:6px;">
+              <button class="sm secondary" onclick="fetchLogs('${a.id}')">Logs</button>
+              <button class="sm secondary" onclick="document.getElementById('chatId').value='${a.id}'">Chat</button>
+              <button class="sm danger" onclick="killBot('${a.id}')">Kill</button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join('');
+
+    const logId = document.getElementById('logId').value.trim();
+    if (logId) fetchLogs(logId);
+
+    // Also refresh proxy stats on each cycle
+    refreshProxyStats();
+  }
+
+  // Auto-refresh every 8s
+  setInterval(refresh, 8000);
+  refresh();
+</script>
+</body>
+</html>
