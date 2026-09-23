@@ -156,7 +156,7 @@
       <button class="sec"    onclick="cmd('/look_random')">👁 Look</button>
       <button class="sec"    onclick="cmd('/respawn')">💀 Respawn</button>
       <button class="sec"    onclick="cmd('/status')">📊 Status</button>
-      <button class="danger" onclick="cmd('/reconnect')">🔄 Rejoin</button>
+      <button class="danger" onclick="cmd('/reconnect')">🔄 Reconnect</button>
     </div>
     <label>Custom command / message</label>
     <div style="display:flex;gap:6px;">
@@ -164,6 +164,9 @@
       <button onclick="runCustom()">▶ Run</button>
     </div>
     <div id="cmdResult"></div>
+    <div style="font-size:0.7rem;color:#333;margin-top:8px;line-height:1.6;">
+      ℹ Bot will NOT auto-reconnect. Use 🔄 Reconnect when ready.
+    </div>
   </div>
 
   <div class="panel">
@@ -227,7 +230,7 @@ function dotCls(s) {
   if (!s) return 'offline';
   if (s.startsWith('online')) return 'online';
   if (/connecting|reconnecting|antibot|transferring|verifying|authing/.test(s)) return 'connecting';
-  if (s === 'kicked') return 'kicked';
+  if (s === 'kicked' || s.includes('kicked') || s.includes('disconnected')) return 'kicked';
   return 'offline';
 }
 
