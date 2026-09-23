@@ -2,7 +2,6 @@ const mineflayer  = require('mineflayer');
 const { pathfinder, Movements, goals } = require('mineflayer-pathfinder');
 const { GoalBlock } = goals;
 const { SocksClient } = require('socks');
-const { attachCaptchaSolver } = require('./captchaSolver');
 const ProxyManager = require('./proxyManager');
 
 const SERVER_HOST    = 'play.applemc.fun';
@@ -69,7 +68,7 @@ class BotManager {
         status:           'connecting',
         created:          Date.now(),
         reconnects:       0,
-        autoRejoin:       true,
+        autoRejoin:       false,  // MANUAL only — use /reconnect from UI
         registered:       false,
         verificationKick: false,
         inBanana:         false,
@@ -135,7 +134,7 @@ class BotManager {
     }
 
     bot.loadPlugin(pathfinder);
-    attachCaptchaSolver(bot, (msg) => this._log(id, `[CAPTCHA] ${msg}`), this.meta[id]);
+    // No auto captcha solver — enter captcha manually via UI
 
     // ── Spawn event — LOCK movement immediately ────────────────
     bot.once('spawn', () => {
@@ -221,33 +220,20 @@ class BotManager {
     bot.on('kicked', (reason) => {
       const r = typeof reason === 'string' ? reason : JSON.stringify(reason);
       this._log(id, `Kicked: ${r}`);
-
-      const isVerifyKick =
-        this.meta[id].verificationKick ||
-        /verify|bot.?check|captcha|not a bot|human|challenge|failed the bot/i.test(r) ||
-        (Date.now() - this.meta[id]._spawnTime) < 8000;
-
-      if (isVerifyKick) {
-        this.meta[id].verificationKick = false;
-        this._cleanup(id);
-        if (this.meta[id]?.autoRejoin) {
-          const delay = this._randomDelay();
-          this._log(id, `ANTIBOT kick — rejoining in ${(delay/1000).toFixed(1)}s`);
-          this.meta[id].status = `antibot kick — rejoining ${(delay/1000).toFixed(1)}s`;
-          this.timers[id] = setTimeout(() => this._spawnBot(id), delay);
-        }
-      } else {
-        this.meta[id].status = 'kicked';
-        this._cleanup(id);
-        if (this.meta[id]?.autoRejoin) this._scheduleReconnect(id);
-      }
+      // Never auto-reconnect — user must hit /reconnect from UI
+      const isVerify = /verify|bot.?check|captcha|not a bot|human|challenge|failed the bot/i.test(r);
+      this.meta[id].status = isVerify ? 'kicked — ANTIBOT (reconnect manually)' : 'kicked (reconnect manually)';
+      this.meta[id].verificationKick = false;
+      this.meta[id].captchaImage = null;
+      this._cleanup(id);
     });
 
     bot.on('end', (reason) => {
       this._log(id, `Disconnected: ${reason}`);
       this.meta[id].inBanana = false;
       this._cleanup(id);
-      if (this.meta[id]?.autoRejoin) this._scheduleReconnect(id);
+      // Never auto-reconnect — user must hit /reconnect from UI
+      if (this.meta[id]) this.meta[id].status = 'disconnected (reconnect manually)';
     });
 
     bot.on('error', (err) => this._log(id, `Error: ${err.message}`));
