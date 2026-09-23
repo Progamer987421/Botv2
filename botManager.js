@@ -174,25 +174,9 @@ class BotManager {
       });
       try { bot.pathfinder.setGoal(null); } catch (_) {}
 
-      // Wait then auth — only if ANTIBOT hasn't kicked us first
-      setTimeout(() => {
-        if (!this.bots[id]) return;
-        this.meta[id].status = 'authing';
-        this._log(id, 'Auth delay elapsed — sending credentials');
-        if (!this.meta[id].registered) {
-          bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`);
-          this._log(id, 'Sent /register');
-          this.meta[id].registered = true;
-          setTimeout(() => {
-            if (!this.bots[id]) return;
-            bot.chat(`/login ${BOT_PASSWORD}`);
-            this._log(id, 'Sent /login');
-          }, 1500);
-        } else {
-          bot.chat(`/login ${BOT_PASSWORD}`);
-          this._log(id, 'Sent /login');
-        }
-      }, AUTH_DELAY);
+      // Auth triggered only by ANTIBOT clear message — no fixed timer.
+      // Bot stays fully frozen until server confirms verification passed.
+      this._log(id, 'Waiting for ANTIBOT clear message before any action');
     });
 
     // ── Message listener ──────────────────────────────────────
@@ -212,18 +196,22 @@ class BotManager {
         this._log(id, 'ANTIBOT: movement lock confirmed');
       }
 
-      // ANTIBOT clear
+      // ANTIBOT clear — trigger auth immediately after clearance
       if (this.meta[id].antiBotLocked &&
           /verified|you have passed|verification (complete|passed|successful)|you may (now )?move|bot.?check passed/i.test(text)) {
         this.meta[id].antiBotLocked = false;
-        this._log(id, 'ANTIBOT: cleared — movement unlocked');
+        this._log(id, 'ANTIBOT: cleared — movement unlocked, triggering auth');
+        clearTimeout(this.meta[id]._authFallback);
+        // Small delay so server finishes its own state update before we send chat
+        setTimeout(() => this._doAuth(id, bot), 800);
       }
 
-      // Auth success — stand still, DO NOT route to /server banana automatically
-      if (/logged in|successfully authenticated|you are now logged/i.test(text)) {
+      // Registration success — bot stays still, no /login sent
+      if (/registered|successfully registered|you are now registered|logged in|successfully authenticated|you are now logged/i.test(text)) {
         this.meta[id].status = 'online ✓';
-        this._log(id, 'Authenticated — bot standing still (no auto-routing)');
-        // No /server banana. No anti-AFK walk. Bot just stands.
+        this.meta[id].captchaPending = false;
+        this._log(id, 'Registered/authed — bot standing still');
+        // Bot just stands. No /login. No /server banana. No movement.
       }
 
       if (/wrong password|incorrect password/i.test(text)) {
@@ -320,8 +308,44 @@ class BotManager {
     try {
       bot.chat(cmd);
       this._log(id, `[CMD] ${cmd}`);
+      // If captcha is pending, this cmd is the captcha answer
+      // Auto-send /register immediately after
+      if (this.meta[id].captchaPending) {
+        this._log(id, 'Captcha answer sent — auto-registering');
+        setTimeout(() => this._register(id, bot), 4500);
+      }
       return { ok: true };
     } catch (e) { return { error: e.message }; }
+  }
+
+  // ── Auth helper — called after ANTIBOT clears ───────────────
+  // Flow: ANTIBOT clear → wait for captcha (manual) → /register only
+  // Bot stays frozen until captcha is submitted via UI, then registers.
+  _doAuth(id, bot) {
+    if (!this.bots[id] || !this.meta[id]) return;
+    if (this.meta[id].antiBotLocked) {
+      this._log(id, '_doAuth skipped — still locked');
+      return;
+    }
+    // Don't send anything yet — wait for captcha to be solved manually
+    this.meta[id].status = 'waiting for captcha';
+    this.meta[id].captchaPending = true;
+    this._log(id, 'ANTIBOT cleared — bot frozen, waiting for captcha solve via UI');
+  }
+
+  // Called by runCommand when captcha answer is submitted
+  // After captcha answer is sent, send /register — no /login
+  _register(id, bot) {
+    if (!this.bots[id] || !this.meta[id]) return;
+    if (this.meta[id].registered) {
+      this._log(id, 'Already registered — no action');
+      return;
+    }
+    this.meta[id].status = 'registering';
+    this.meta[id].captchaPending = false;
+    try { bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`); } catch (_) {}
+    this._log(id, 'Sent /register — done, no /login');
+    this.meta[id].registered = true;
   }
 
   getCaptchaImage(id) {
