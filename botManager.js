@@ -99,25 +99,28 @@ class BotManager {
       ? `Connecting as ${username} via ${proxy.host}:${proxy.port}`
       : `Connecting as ${username} (no proxy)`);
 
-    // Build SOCKS5 connect fn
-    let connectFn;
+    // Pre-create SOCKS5 socket, hand it to mineflayer via stream option
+    let proxyStream = null;
     if (proxy) {
-      connectFn = (client, setSocket) => {
-        SocksClient.createConnection({
-          proxy: { host: proxy.host, port: proxy.port, type: 5, userId: proxy.username, password: proxy.password },
-          command: 'connect',
+      try {
+        const { socket } = await SocksClient.createConnection({
+          proxy: {
+            host:     proxy.host,
+            port:     proxy.port,
+            type:     5,
+            userId:   proxy.username,
+            password: proxy.password,
+          },
+          command:     'connect',
           destination: { host: SERVER_HOST, port: SERVER_PORT },
-        })
-        .then(({ socket }) => setSocket(socket))
-        .catch(err => {
-          this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
-          if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
-          const net = require('net');
-          const fallbackSock = net.connect({ host: SERVER_HOST, port: SERVER_PORT });
-          fallbackSock.on('error', e => this._log(id, `Direct fallback socket error: ${e.message}`));
-          setSocket(fallbackSock);
         });
-      };
+        proxyStream = socket;
+        this._log(id, `SOCKS5 tunnel established via ${proxy.host}:${proxy.port}`);
+      } catch (err) {
+        this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
+        if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
+        // proxyStream stays null, mineflayer connects direct
+      }
     }
 
     let bot;
@@ -130,10 +133,11 @@ class BotManager {
         auth:                 'offline',
         checkTimeoutInterval: 30000,
         closeTimeout:         240,
-        ...(connectFn ? { connect: connectFn } : {}),
+        ...(proxyStream ? { stream: proxyStream } : {}),
       });
     } catch (err) {
       this._log(id, `Spawn error: ${err.message}`);
+      if (proxyStream) { try { proxyStream.destroy(); } catch (_) {} }
       this._scheduleReconnect(id);
       return;
     }
