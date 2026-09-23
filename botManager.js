@@ -99,33 +99,10 @@ class BotManager {
       ? `Connecting as ${username} via ${proxy.host}:${proxy.port}`
       : `Connecting as ${username} (no proxy)`);
 
-    // Pre-create SOCKS5 socket, hand it to mineflayer via stream option
-    let proxyStream = null;
-    if (proxy) {
-      try {
-        const { socket } = await SocksClient.createConnection({
-          proxy: {
-            host:     proxy.host,
-            port:     proxy.port,
-            type:     5,
-            userId:   proxy.username,
-            password: proxy.password,
-          },
-          command:     'connect',
-          destination: { host: SERVER_HOST, port: SERVER_PORT },
-        });
-        proxyStream = socket;
-        this._log(id, `SOCKS5 tunnel established via ${proxy.host}:${proxy.port}`);
-      } catch (err) {
-        this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
-        if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
-        // proxyStream stays null, mineflayer connects direct
-      }
-    }
-
+    // Use SocksClient.createConnection then pass socket via mineflayer connect override
     let bot;
     try {
-      bot = mineflayer.createBot({
+      const botOptions = {
         host:                 SERVER_HOST,
         port:                 SERVER_PORT,
         username,
@@ -133,11 +110,50 @@ class BotManager {
         auth:                 'offline',
         checkTimeoutInterval: 30000,
         closeTimeout:         240,
-        ...(proxyStream ? { stream: proxyStream } : {}),
-      });
+      };
+
+      if (proxy) {
+        // Override the connect function — mineflayer calls this with (client, options)
+        // We ignore both and return a pre-tunneled socket via the undocumented _client path.
+        // Instead: monkey-patch net.connect for this one createBot call only.
+        const net = require('net');
+        const originalConnect = net.connect.bind(net);
+        let patched = false;
+        net.connect = (opts, cb) => {
+          if (!patched && opts && opts.host === SERVER_HOST) {
+            patched = true;
+            net.connect = originalConnect; // restore immediately
+            const sock = new net.Socket();
+            SocksClient.createConnection({
+              proxy: {
+                host:     proxy.host,
+                port:     proxy.port,
+                type:     5,
+                userId:   proxy.username,
+                password: proxy.password,
+              },
+              command:     'connect',
+              destination: { host: SERVER_HOST, port: SERVER_PORT },
+              existing_socket: sock,
+            }).then(({ socket }) => {
+              this._log(id, `SOCKS5 tunnel established via ${proxy.host}:${proxy.port}`);
+              if (cb) socket.once('connect', cb);
+            }).catch(err => {
+              this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
+              net.connect = originalConnect;
+              if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
+              const fallback = originalConnect(opts, cb);
+              fallback.on('error', e => this._log(id, `Fallback error: ${e.message}`));
+            });
+            return sock;
+          }
+          return originalConnect(opts, cb);
+        };
+      }
+
+      bot = mineflayer.createBot(botOptions);
     } catch (err) {
       this._log(id, `Spawn error: ${err.message}`);
-      if (proxyStream) { try { proxyStream.destroy(); } catch (_) {} }
       this._scheduleReconnect(id);
       return;
     }
