@@ -189,6 +189,54 @@
 
   .empty { color: #333; text-align: center; padding: 20px; font-size: 0.85rem; }
 
+  /* ── Command panel ── */
+  .cmd-btn {
+    background: #0d1b2a;
+    border: 1px solid #1e3a5f;
+    color: #64b5f6;
+    padding: 6px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 0.75rem;
+    transition: background 0.15s;
+  }
+  .cmd-btn:hover { background: #1a2f4a; }
+  .cmd-btn.red    { border-color: #5f1e1e; color: #ef9a9a; }
+  .cmd-btn.red:hover { background: #3a1010; }
+  .cmd-btn.green  { border-color: #1e5f2a; color: #a5d6a7; }
+  .cmd-btn.green:hover { background: #0f3a18; }
+  .cmd-btn.yellow { border-color: #5f4a1e; color: #ffe082; }
+  .cmd-btn.yellow:hover { background: #3a2e0a; }
+
+  .cmd-result {
+    font-size: 0.72rem;
+    color: #4caf50;
+    margin-top: 6px;
+    min-height: 18px;
+    word-break: break-all;
+  }
+  .cmd-result.err { color: #ef5350; }
+
+  /* ── Captcha viewer ── */
+  #captchaViewer {
+    background: #080808;
+    border: 1px solid #1e1e1e;
+    border-radius: 4px;
+    padding: 10px;
+    text-align: center;
+    margin-top: 10px;
+  }
+  #captchaImg {
+    image-rendering: pixelated;
+    width: 256px;
+    height: 256px;
+    display: none;
+    margin: 0 auto;
+    border: 1px solid #333;
+  }
+  #captchaStatus { font-size: 0.72rem; color: #546e7a; margin-top: 6px; }
+
   /* ── Proxy stats block ── */
   #proxyStats {
     font-size: 0.78rem;
@@ -242,53 +290,19 @@
 
     <!-- ── Proxy Panel ── -->
     <div class="panel">
-      <h2>Proxy</h2>
+      <h2>Proxy — Webshare Auto-Fetch</h2>
 
-      <!-- Mode tabs -->
-      <div style="display:flex;gap:0;margin-bottom:14px;border:1px solid #333;border-radius:4px;overflow:hidden;">
-        <button id="tabWebshare" onclick="setProxyTab('webshare')"
-          style="flex:1;border-radius:0;background:#1b5e20;border:none;padding:7px 0;font-size:0.78rem;">
-          ☁ Webshare
-        </button>
-        <button id="tabCustom" onclick="setProxyTab('custom')"
-          style="flex:1;border-radius:0;background:#141414;border:none;border-left:1px solid #333;padding:7px 0;font-size:0.78rem;color:#666;">
-          🔧 Custom Proxy
-        </button>
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">
+        Webshare API Key (residential only)
+      </label>
+      <input id="wsApiKey" type="password" placeholder="Token from webshare.io dashboard">
+
+      <div class="btn-row" style="margin-bottom:4px;">
+        <button onclick="saveProxyKey()">💾 Save &amp; Fetch</button>
+        <button class="secondary" onclick="refreshProxyStats()">↻ Stats</button>
       </div>
 
-      <!-- Webshare pane -->
-      <div id="paneWebshare">
-        <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">
-          Webshare API Key (residential only)
-        </label>
-        <input id="wsApiKey" type="password" placeholder="Token from webshare.io dashboard">
-        <div class="btn-row" style="margin-bottom:4px;">
-          <button onclick="saveProxyKey()">💾 Save &amp; Fetch</button>
-          <button class="secondary" onclick="refreshProxyStats()">↻ Stats</button>
-        </div>
-      </div>
-
-      <!-- Custom proxy pane -->
-      <div id="paneCustom" style="display:none;">
-        <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">
-          Proxy string
-        </label>
-        <input id="customProxyInput" type="text"
-          placeholder="socks5://user:pass@host:port  or  host:port:user:pass">
-        <div style="font-size:0.72rem;color:#444;margin-bottom:10px;line-height:1.6;">
-          Formats:<br>
-          <code style="color:#555">socks5://user:pass@1.2.3.4:1080</code><br>
-          <code style="color:#555">http://user:pass@1.2.3.4:3128</code><br>
-          <code style="color:#555">1.2.3.4:1080</code> &nbsp;|&nbsp;
-          <code style="color:#555">1.2.3.4:1080:user:pass</code>
-        </div>
-        <div class="btn-row" style="margin-bottom:4px;">
-          <button onclick="saveCustomProxy()">💾 Apply Proxy</button>
-          <button class="secondary" onclick="clearCustomProxy()">✕ Clear</button>
-        </div>
-      </div>
-
-      <div id="proxyStats" style="margin-top:10px;">No proxy data yet.</div>
+      <div id="proxyStats">No proxy data yet.</div>
     </div>
 
     <div class="panel">
@@ -309,6 +323,51 @@
       <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">Message</label>
       <input id="chatMsg" placeholder="Message to send" onkeydown="if(event.key==='Enter')sendChat()">
       <button onclick="sendChat()">Send</button>
+    </div>
+
+    <!-- ── Commands Panel ── -->
+    <div class="panel">
+      <h2>Bot Commands</h2>
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">Target bot username</label>
+      <input id="cmdBotId" placeholder="Bot username">
+
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">Quick commands</label>
+      <div class="btn-row" style="margin-bottom:10px;flex-wrap:wrap;">
+        <button class="cmd-btn green"  onclick="runCmd('/server banana')">🍌 /server banana</button>
+        <button class="cmd-btn"        onclick="runCmd('/lobby')">🏠 /lobby</button>
+        <button class="cmd-btn"        onclick="runCmd('/spawn')">📍 /spawn</button>
+        <button class="cmd-btn yellow" onclick="runCmd('/freeze')">❄ Freeze</button>
+        <button class="cmd-btn yellow" onclick="runCmd('/unfreeze')">▶ Unfreeze</button>
+        <button class="cmd-btn"        onclick="runCmd('/look_random')">👁 Look</button>
+        <button class="cmd-btn"        onclick="runCmd('/respawn')">💀 Respawn</button>
+        <button class="cmd-btn"        onclick="runCmd('/status')">📊 Status</button>
+        <button class="cmd-btn red"    onclick="runCmd('/reconnect')">🔄 Reconnect</button>
+      </div>
+
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">Custom command / message</label>
+      <div style="display:flex;gap:6px;">
+        <input id="cmdInput" placeholder="/command or message" onkeydown="if(event.key==='Enter')runCustomCmd()" style="margin:0;flex:1;">
+        <button onclick="runCustomCmd()" style="margin:0;white-space:nowrap;">▶ Run</button>
+      </div>
+      <div id="cmdResult" class="cmd-result"></div>
+    </div>
+
+    <!-- ── Captcha Viewer ── -->
+    <div class="panel">
+      <h2>Captcha Viewer</h2>
+      <label style="font-size:0.8rem;color:#666;display:block;margin-bottom:6px;">Bot username</label>
+      <div style="display:flex;gap:6px;">
+        <input id="captchaBotId" placeholder="Bot username" style="margin:0;flex:1;">
+        <button onclick="fetchCaptcha()" style="margin:0;">🔍 Fetch</button>
+      </div>
+      <div id="captchaViewer">
+        <img id="captchaImg" alt="captcha">
+        <div id="captchaStatus">No captcha loaded — select a bot and click Fetch.</div>
+      </div>
+      <div style="display:flex;gap:6px;margin-top:8px;">
+        <input id="captchaAnswer" placeholder="Type captcha answer..." style="margin:0;flex:1;" onkeydown="if(event.key==='Enter')submitCaptcha()">
+        <button onclick="submitCaptcha()" style="margin:0;">✔ Submit</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -369,53 +428,6 @@
     if (h > 0) return `${h}h ${m}m`;
     if (m > 0) return `${m}m ${sec}s`;
     return `${sec}s`;
-  }
-
-  // ── Proxy tab switcher ────────────────────────────────────────
-  function setProxyTab(mode) {
-    const isWS = mode === 'webshare';
-    document.getElementById('paneWebshare').style.display = isWS ? '' : 'none';
-    document.getElementById('paneCustom').style.display   = isWS ? 'none' : '';
-    document.getElementById('tabWebshare').style.background = isWS ? '#1b5e20' : '#141414';
-    document.getElementById('tabWebshare').style.color      = isWS ? '#e0e0e0' : '#666';
-    document.getElementById('tabCustom').style.background   = isWS ? '#141414' : '#1b5e20';
-    document.getElementById('tabCustom').style.color        = isWS ? '#666' : '#e0e0e0';
-  }
-
-  // ── Custom single proxy ────────────────────────────────────────
-  async function saveCustomProxy() {
-    const proxy = document.getElementById('customProxyInput').value.trim();
-    if (!proxy) return alert('Paste your proxy string first');
-
-    const statsEl = document.getElementById('proxyStats');
-    statsEl.innerHTML = '<span style="color:#ffc107">● Connecting...</span>';
-
-    try {
-      const r = await fetch('/proxy/custom', {
-        method:  'POST',
-        headers: H(),
-        body:    JSON.stringify({ proxy }),
-      });
-      const d = await r.json();
-      if (d.error) {
-        statsEl.innerHTML = '<span style="color:#ef5350">● Error: ' + d.error + '</span>';
-        return;
-      }
-      const latency = d.latency >= 9999 ? 'unverified' : d.latency + 'ms';
-      statsEl.innerHTML =
-        '<span style="color:#4caf50">●</span> Custom proxy active — ' +
-        '<b style="color:#4caf50">' + d.host + ':' + d.port + '</b>' +
-        ' &nbsp;|&nbsp; latency: ' + latency;
-      document.getElementById('statProxyPool').textContent = '1';
-    } catch (e) {
-      statsEl.innerHTML = '<span style="color:#ef5350">● Request failed: ' + e.message + '</span>';
-    }
-  }
-
-  function clearCustomProxy() {
-    document.getElementById('customProxyInput').value = '';
-    document.getElementById('proxyStats').textContent = 'No proxy data yet.';
-    document.getElementById('statProxyPool').textContent = '—';
   }
 
   // ── Proxy ──────────────────────────────────────────────────────
@@ -548,12 +560,100 @@
       `;
     }).join('');
 
+    // Auto-refresh captcha if a bot has one
+    accounts.forEach(a => {
+      if (a.captchaImage) {
+        const captchaBotField = document.getElementById('captchaBotId').value.trim();
+        if (!captchaBotField || captchaBotField === a.id) {
+          document.getElementById('captchaBotId').value = a.id;
+          const img = document.getElementById('captchaImg');
+          img.src = a.captchaImage;
+          img.style.display = 'block';
+          document.getElementById('captchaStatus').textContent = 'Captcha active on ' + a.username + ' — submit answer below.';
+        }
+      }
+    });
+
     const logId = document.getElementById('logId').value.trim();
     if (logId) fetchLogs(logId);
 
     // Also refresh proxy stats on each cycle
     refreshProxyStats();
   }
+
+  // ── Commands ───────────────────────────────────────────────────
+  function getCmdBotId() {
+    return document.getElementById('cmdBotId').value.trim();
+  }
+
+  async function runCmd(cmd) {
+    const id = getCmdBotId();
+    if (!id) return showCmdResult('Set a bot username first', true);
+    // Sync bot id to other panels
+    document.getElementById('captchaBotId').value = id;
+    document.getElementById('logId').value = id;
+    const r = await fetch(`/bot/${encodeURIComponent(id)}/cmd`, {
+      method: 'POST', headers: H(), body: JSON.stringify({ cmd })
+    });
+    const d = await r.json();
+    if (d.error) return showCmdResult('Error: ' + d.error, true);
+    showCmdResult(d.msg || '✔ ' + cmd, false);
+  }
+
+  async function runCustomCmd() {
+    const cmd = document.getElementById('cmdInput').value.trim();
+    if (!cmd) return;
+    await runCmd(cmd);
+    document.getElementById('cmdInput').value = '';
+  }
+
+  function showCmdResult(msg, isErr) {
+    const el = document.getElementById('cmdResult');
+    el.textContent = msg;
+    el.className = 'cmd-result' + (isErr ? ' err' : '');
+    setTimeout(() => { el.textContent = ''; el.className = 'cmd-result'; }, 4000);
+  }
+
+  // ── Captcha viewer ──────────────────────────────────────────────
+  async function fetchCaptcha() {
+    const id = document.getElementById('captchaBotId').value.trim();
+    if (!id) return;
+    document.getElementById('cmdBotId').value = id;
+    const r = await fetch(`/bot/${encodeURIComponent(id)}/captcha`, { headers: H() });
+    const d = await r.json();
+    const img = document.getElementById('captchaImg');
+    const status = document.getElementById('captchaStatus');
+    if (d.error) { status.textContent = d.error; img.style.display='none'; return; }
+    if (!d.image) { status.textContent = 'No captcha image yet — bot may not have received one.'; img.style.display='none'; return; }
+    img.src = d.image;
+    img.style.display = 'block';
+    status.textContent = 'Captcha received — type the answer below and submit.';
+  }
+
+  async function submitCaptcha() {
+    const id  = document.getElementById('captchaBotId').value.trim();
+    const ans = document.getElementById('captchaAnswer').value.trim();
+    if (!id || !ans) return;
+    const r = await fetch(`/bot/${encodeURIComponent(id)}/cmd`, {
+      method: 'POST', headers: H(), body: JSON.stringify({ cmd: ans })
+    });
+    const d = await r.json();
+    document.getElementById('captchaStatus').textContent = d.error ? 'Error: ' + d.error : '✔ Answer submitted: ' + ans;
+    document.getElementById('captchaAnswer').value = '';
+  }
+
+  // Also auto-sync cmdBotId when user clicks Logs/Chat buttons in table
+  document.addEventListener('click', e => {
+    if (e.target.closest('#accountBody')) {
+      const row = e.target.closest('tr');
+      if (!row) return;
+      const usernameCell = row.querySelector('.username');
+      if (usernameCell) {
+        const uname = usernameCell.textContent.trim();
+        if (uname) document.getElementById('cmdBotId').value = uname;
+      }
+    }
+  });
 
   // Auto-refresh every 8s
   setInterval(refresh, 8000);
