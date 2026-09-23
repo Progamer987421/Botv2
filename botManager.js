@@ -79,7 +79,9 @@ class BotManager {
         _spawnTime:       0,
       };
       this.logs[id] = [];
-      this._proxyReady.then(() => this._spawnBot(id));
+      this._proxyReady
+        .then(() => this._spawnBot(id))
+        .catch(err => this._log(id, `Spawn chain error: ${err.message}`));
       created.push(id);
     }
     return { success: true, created };
@@ -87,6 +89,7 @@ class BotManager {
 
   // ── Spawn ─────────────────────────────────────────────────────
   async _spawnBot(id) {
+    try {
     if (!this.meta[id]) return;
     const { username } = this.accounts[id];
     const proxy = this._getProxy();
@@ -110,7 +113,9 @@ class BotManager {
           this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
           if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
           const net = require('net');
-          setSocket(net.connect({ host: SERVER_HOST, port: SERVER_PORT }));
+          const fallbackSock = net.connect({ host: SERVER_HOST, port: SERVER_PORT });
+          fallbackSock.on('error', e => this._log(id, `Direct fallback socket error: ${e.message}`));
+          setSocket(fallbackSock);
         });
       };
     }
@@ -245,6 +250,10 @@ class BotManager {
 
     this.meta[id]._spawnTime = Date.now();
     this.bots[id] = bot;
+    } catch (err) {
+      this._log(id, `_spawnBot uncaught: ${err.message}`);
+      if (this.meta[id]) this.meta[id].status = 'error — reconnect manually';
+    }
   }
 
   // ── Commands ──────────────────────────────────────────────────

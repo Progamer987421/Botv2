@@ -1,4 +1,12 @@
 require('dotenv').config();
+
+// Prevent any stray unhandled promise rejection from crashing the server
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[UNCAUGHT] Unhandled promise rejection:', reason?.message || reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[UNCAUGHT] Exception:', err.message);
+});
 const express      = require('express');
 const BotManager   = require('./botManager');
 const ProxyManager = require('./proxyManager');
