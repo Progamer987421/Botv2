@@ -99,30 +99,10 @@ class BotManager {
       ? `Connecting as ${username} via ${proxy.host}:${proxy.port}`
       : `Connecting as ${username} (no proxy)`);
 
-    // Build SOCKS5 connect fn
-    let connectFn;
-    if (proxy) {
-      connectFn = (client, setSocket) => {
-        SocksClient.createConnection({
-          proxy: { host: proxy.host, port: proxy.port, type: 5, userId: proxy.username, password: proxy.password },
-          command: 'connect',
-          destination: { host: SERVER_HOST, port: SERVER_PORT },
-        })
-        .then(({ socket }) => setSocket(socket))
-        .catch(err => {
-          this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
-          if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
-          const net = require('net');
-          const fallbackSock = net.connect({ host: SERVER_HOST, port: SERVER_PORT });
-          fallbackSock.on('error', e => this._log(id, `Direct fallback socket error: ${e.message}`));
-          setSocket(fallbackSock);
-        });
-      };
-    }
-
+    // Use SocksClient.createConnection then pass socket via mineflayer connect override
     let bot;
     try {
-      bot = mineflayer.createBot({
+      const botOptions = {
         host:                 SERVER_HOST,
         port:                 SERVER_PORT,
         username,
@@ -130,8 +110,48 @@ class BotManager {
         auth:                 'offline',
         checkTimeoutInterval: 30000,
         closeTimeout:         240,
-        ...(connectFn ? { connect: connectFn } : {}),
-      });
+      };
+
+      if (proxy) {
+        // Override the connect function — mineflayer calls this with (client, options)
+        // We ignore both and return a pre-tunneled socket via the undocumented _client path.
+        // Instead: monkey-patch net.connect for this one createBot call only.
+        const net = require('net');
+        const originalConnect = net.connect.bind(net);
+        let patched = false;
+        net.connect = (opts, cb) => {
+          if (!patched && opts && opts.host === SERVER_HOST) {
+            patched = true;
+            net.connect = originalConnect; // restore immediately
+            const sock = new net.Socket();
+            SocksClient.createConnection({
+              proxy: {
+                host:     proxy.host,
+                port:     proxy.port,
+                type:     5,
+                userId:   proxy.username,
+                password: proxy.password,
+              },
+              command:     'connect',
+              destination: { host: SERVER_HOST, port: SERVER_PORT },
+              existing_socket: sock,
+            }).then(({ socket }) => {
+              this._log(id, `SOCKS5 tunnel established via ${proxy.host}:${proxy.port}`);
+              if (cb) socket.once('connect', cb);
+            }).catch(err => {
+              this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
+              net.connect = originalConnect;
+              if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
+              const fallback = originalConnect(opts, cb);
+              fallback.on('error', e => this._log(id, `Fallback error: ${e.message}`));
+            });
+            return sock;
+          }
+          return originalConnect(opts, cb);
+        };
+      }
+
+      bot = mineflayer.createBot(botOptions);
     } catch (err) {
       this._log(id, `Spawn error: ${err.message}`);
       this._scheduleReconnect(id);
@@ -154,25 +174,9 @@ class BotManager {
       });
       try { bot.pathfinder.setGoal(null); } catch (_) {}
 
-      // Wait then auth — only if ANTIBOT hasn't kicked us first
-      setTimeout(() => {
-        if (!this.bots[id]) return;
-        this.meta[id].status = 'authing';
-        this._log(id, 'Auth delay elapsed — sending credentials');
-        if (!this.meta[id].registered) {
-          bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`);
-          this._log(id, 'Sent /register');
-          this.meta[id].registered = true;
-          setTimeout(() => {
-            if (!this.bots[id]) return;
-            bot.chat(`/login ${BOT_PASSWORD}`);
-            this._log(id, 'Sent /login');
-          }, 1500);
-        } else {
-          bot.chat(`/login ${BOT_PASSWORD}`);
-          this._log(id, 'Sent /login');
-        }
-      }, AUTH_DELAY);
+      // Auth triggered only by ANTIBOT clear message — no fixed timer.
+      // Bot stays fully frozen until server confirms verification passed.
+      this._log(id, 'Waiting for ANTIBOT clear message before any action');
     });
 
     // ── Message listener ──────────────────────────────────────
@@ -192,18 +196,22 @@ class BotManager {
         this._log(id, 'ANTIBOT: movement lock confirmed');
       }
 
-      // ANTIBOT clear
+      // ANTIBOT clear — trigger auth immediately after clearance
       if (this.meta[id].antiBotLocked &&
           /verified|you have passed|verification (complete|passed|successful)|you may (now )?move|bot.?check passed/i.test(text)) {
         this.meta[id].antiBotLocked = false;
-        this._log(id, 'ANTIBOT: cleared — movement unlocked');
+        this._log(id, 'ANTIBOT: cleared — movement unlocked, triggering auth');
+        clearTimeout(this.meta[id]._authFallback);
+        // Small delay so server finishes its own state update before we send chat
+        setTimeout(() => this._doAuth(id, bot), 800);
       }
 
-      // Auth success — stand still, DO NOT route to /server banana automatically
-      if (/logged in|successfully authenticated|you are now logged/i.test(text)) {
+      // Registration success — bot stays still, no /login sent
+      if (/registered|successfully registered|you are now registered|logged in|successfully authenticated|you are now logged/i.test(text)) {
         this.meta[id].status = 'online ✓';
-        this._log(id, 'Authenticated — bot standing still (no auto-routing)');
-        // No /server banana. No anti-AFK walk. Bot just stands.
+        this.meta[id].captchaPending = false;
+        this._log(id, 'Registered/authed — bot standing still');
+        // Bot just stands. No /login. No /server banana. No movement.
       }
 
       if (/wrong password|incorrect password/i.test(text)) {
@@ -293,6 +301,103 @@ class BotManager {
 
       case '/status':
         return { ok: true, msg: `status=${this.meta[id].status} | locked=${this.meta[id].antiBotLocked} | proxy=${this.meta[id].proxy ? this.meta[id].proxy.host + ':' + this.meta[id].proxy.port : 'direct'}` };
+
+      // ── Movement commands ──────────────────────────────────────
+      case '/move_forward':
+      case '/move_back':
+      case '/move_left':
+      case '/move_right': {
+        if (this.meta[id].antiBotLocked) return { error: 'Bot is locked — ANTIBOT active. Use /unfreeze first.' };
+        if (!bot) return { error: 'Bot not online' };
+        const dirMap = { '/move_forward': 'forward', '/move_back': 'back', '/move_left': 'left', '/move_right': 'right' };
+        const dir = dirMap[cmd];
+        try {
+          ['forward','back','left','right'].forEach(k => { try { bot.setControlState(k, false); } catch (_) {} });
+          bot.setControlState(dir, true);
+          setTimeout(() => { try { bot.setControlState(dir, false); } catch (_) {} }, 1000);
+          this._log(id, `[MOVE] ${dir} for 1s`);
+          return { ok: true, msg: `Moving ${dir} for 1 second` };
+        } catch (e) { return { error: e.message }; }
+      }
+
+      case '/jump': {
+        if (this.meta[id].antiBotLocked) return { error: 'Bot is locked — ANTIBOT active.' };
+        if (!bot) return { error: 'Bot not online' };
+        try {
+          bot.setControlState('jump', true);
+          setTimeout(() => { try { bot.setControlState('jump', false); } catch (_) {} }, 300);
+          this._log(id, '[MOVE] jump');
+          return { ok: true, msg: 'Jumped' };
+        } catch (e) { return { error: e.message }; }
+      }
+
+      case '/sneak': {
+        if (this.meta[id].antiBotLocked) return { error: 'Bot is locked — ANTIBOT active.' };
+        if (!bot) return { error: 'Bot not online' };
+        try {
+          const current = this.meta[id]._sneaking || false;
+          this.meta[id]._sneaking = !current;
+          bot.setControlState('sneak', !current);
+          this._log(id, `[MOVE] sneak ${!current ? 'ON' : 'OFF'}`);
+          return { ok: true, msg: `Sneak ${!current ? 'ON' : 'OFF'}` };
+        } catch (e) { return { error: e.message }; }
+      }
+
+      case '/sprint': {
+        if (this.meta[id].antiBotLocked) return { error: 'Bot is locked — ANTIBOT active.' };
+        if (!bot) return { error: 'Bot not online' };
+        try {
+          const current = this.meta[id]._sprinting || false;
+          this.meta[id]._sprinting = !current;
+          bot.setControlState('sprint', !current);
+          this._log(id, `[MOVE] sprint ${!current ? 'ON' : 'OFF'}`);
+          return { ok: true, msg: `Sprint ${!current ? 'ON' : 'OFF'}` };
+        } catch (e) { return { error: e.message }; }
+      }
+
+      case '/stop_movement': {
+        if (!bot) return { error: 'Bot not online' };
+        try {
+          ['forward','back','left','right','jump','sneak','sprint'].forEach(k => {
+            try { bot.setControlState(k, false); } catch (_) {}
+          });
+          try { bot.pathfinder.setGoal(null); } catch (_) {}
+          this.meta[id]._sneaking  = false;
+          this.meta[id]._sprinting = false;
+          this._log(id, '[MOVE] all movement stopped');
+          return { ok: true, msg: 'All movement stopped' };
+        } catch (e) { return { error: e.message }; }
+      }
+    }
+
+    // /move <x> <y> <z> — pathfinder walk to coordinates
+    const moveMatch = cmd.match(/^\/move\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/);
+    if (moveMatch) {
+      if (this.meta[id].antiBotLocked) return { error: 'Bot is locked — ANTIBOT active.' };
+      if (!bot) return { error: 'Bot not online' };
+      try {
+        const x = parseFloat(moveMatch[1]);
+        const y = parseFloat(moveMatch[2]);
+        const z = parseFloat(moveMatch[3]);
+        const movements = new Movements(bot);
+        bot.pathfinder.setMovements(movements);
+        bot.pathfinder.setGoal(new GoalBlock(Math.floor(x), Math.floor(y), Math.floor(z)));
+        this._log(id, `[MOVE] pathfinding to ${x} ${y} ${z}`);
+        return { ok: true, msg: `Pathfinding to ${x}, ${y}, ${z}` };
+      } catch (e) { return { error: e.message }; }
+    }
+
+    // /look <yaw> <pitch> — rotate to direction in degrees (0° yaw = south)
+    const lookMatch = cmd.match(/^\/look\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)$/);
+    if (lookMatch) {
+      if (!bot) return { error: 'Bot not online' };
+      try {
+        const yaw   = (parseFloat(lookMatch[1]) * Math.PI) / 180;
+        const pitch = (parseFloat(lookMatch[2]) * Math.PI) / 180;
+        bot.look(yaw, pitch, false);
+        this._log(id, `[MOVE] look yaw=${lookMatch[1]}° pitch=${lookMatch[2]}°`);
+        return { ok: true, msg: `Looking — yaw ${lookMatch[1]}° pitch ${lookMatch[2]}°` };
+      } catch (e) { return { error: e.message }; }
     }
 
     // Any other /command or message — send to server
@@ -300,8 +405,44 @@ class BotManager {
     try {
       bot.chat(cmd);
       this._log(id, `[CMD] ${cmd}`);
+      // If captcha is pending, this cmd is the captcha answer
+      // Auto-send /register immediately after
+      if (this.meta[id].captchaPending) {
+        this._log(id, 'Captcha answer sent — auto-registering');
+        setTimeout(() => this._register(id, bot), 4500);
+      }
       return { ok: true };
     } catch (e) { return { error: e.message }; }
+  }
+
+  // ── Auth helper — called after ANTIBOT clears ───────────────
+  // Flow: ANTIBOT clear → wait for captcha (manual) → /register only
+  // Bot stays frozen until captcha is submitted via UI, then registers.
+  _doAuth(id, bot) {
+    if (!this.bots[id] || !this.meta[id]) return;
+    if (this.meta[id].antiBotLocked) {
+      this._log(id, '_doAuth skipped — still locked');
+      return;
+    }
+    // Don't send anything yet — wait for captcha to be solved manually
+    this.meta[id].status = 'waiting for captcha';
+    this.meta[id].captchaPending = true;
+    this._log(id, 'ANTIBOT cleared — bot frozen, waiting for captcha solve via UI');
+  }
+
+  // Called by runCommand when captcha answer is submitted
+  // After captcha answer is sent, send /register — no /login
+  _register(id, bot) {
+    if (!this.bots[id] || !this.meta[id]) return;
+    if (this.meta[id].registered) {
+      this._log(id, 'Already registered — no action');
+      return;
+    }
+    this.meta[id].status = 'registering';
+    this.meta[id].captchaPending = false;
+    try { bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`); } catch (_) {}
+    this._log(id, 'Sent /register — done, no /login');
+    this.meta[id].registered = true;
   }
 
   getCaptchaImage(id) {
