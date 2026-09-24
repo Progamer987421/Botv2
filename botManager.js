@@ -87,62 +87,6 @@ class BotManager {
     return { success: true, created };
   }
 
-  // ── Custom (personal) accounts ───────────────────────────────
-  addCustomAccount(username, password) {
-    username = username.trim();
-    password = (password || '').trim();
-    if (!username) return { error: 'username required' };
-    if (this.accounts[username]) return { error: `Account already exists: ${username}` };
-
-    this.accounts[username] = {
-      username,
-      password: password || null,
-      custom:   true,
-      created:  Date.now(),
-    };
-    this.meta[username] = {
-      username,
-      status:           'idle — click Connect',
-      created:          Date.now(),
-      reconnects:       0,
-      autoRejoin:       false,
-      registered:       true,   // personal acc is already registered on server
-      verificationKick: false,
-      inBanana:         false,
-      captchaPending:   false,
-      antiBotLocked:    false,
-      captchaImage:     null,
-      proxy:            null,
-      _spawnTime:       0,
-      custom:           true,
-    };
-    this.logs[username] = [];
-    return { success: true, id: username };
-  }
-
-  connectCustomAccount(id) {
-    if (!this.accounts[id])         return { error: `Account not found: ${id}` };
-    if (!this.accounts[id].custom)  return { error: 'Use /reconnect for random bots' };
-    if (this.bots[id])              return { error: 'Already connected' };
-    this.meta[id].status = 'connecting';
-    this._proxyReady
-      .then(() => this._spawnBot(id))
-      .catch(err => this._log(id, `Connect error: ${err.message}`));
-    return { success: true };
-  }
-
-  removeCustomAccount(id) {
-    if (!this.accounts[id]) return { error: `Not found: ${id}` };
-    if (this.bots[id]) { try { this.bots[id].quit(); } catch (_) {} }
-    this._cleanup(id);
-    clearTimeout(this.timers[id]);
-    delete this.accounts[id];
-    delete this.meta[id];
-    delete this.logs[id];
-    delete this.timers[id];
-    return { success: true };
-  }
-
   // ── Spawn ─────────────────────────────────────────────────────
   async _spawnBot(id) {
     try {
@@ -155,10 +99,30 @@ class BotManager {
       ? `Connecting as ${username} via ${proxy.host}:${proxy.port}`
       : `Connecting as ${username} (no proxy)`);
 
-    // Use SocksClient.createConnection then pass socket via mineflayer connect override
+    // Build SOCKS5 connect fn
+    let connectFn;
+    if (proxy) {
+      connectFn = (client, setSocket) => {
+        SocksClient.createConnection({
+          proxy: { host: proxy.host, port: proxy.port, type: 5, userId: proxy.username, password: proxy.password },
+          command: 'connect',
+          destination: { host: SERVER_HOST, port: SERVER_PORT },
+        })
+        .then(({ socket }) => setSocket(socket))
+        .catch(err => {
+          this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
+          if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
+          const net = require('net');
+          const fallbackSock = net.connect({ host: SERVER_HOST, port: SERVER_PORT });
+          fallbackSock.on('error', e => this._log(id, `Direct fallback socket error: ${e.message}`));
+          setSocket(fallbackSock);
+        });
+      };
+    }
+
     let bot;
     try {
-      const botOptions = {
+      bot = mineflayer.createBot({
         host:                 SERVER_HOST,
         port:                 SERVER_PORT,
         username,
@@ -166,48 +130,8 @@ class BotManager {
         auth:                 'offline',
         checkTimeoutInterval: 30000,
         closeTimeout:         240,
-      };
-
-      if (proxy) {
-        // Override the connect function — mineflayer calls this with (client, options)
-        // We ignore both and return a pre-tunneled socket via the undocumented _client path.
-        // Instead: monkey-patch net.connect for this one createBot call only.
-        const net = require('net');
-        const originalConnect = net.connect.bind(net);
-        let patched = false;
-        net.connect = (opts, cb) => {
-          if (!patched && opts && opts.host === SERVER_HOST) {
-            patched = true;
-            net.connect = originalConnect; // restore immediately
-            const sock = new net.Socket();
-            SocksClient.createConnection({
-              proxy: {
-                host:     proxy.host,
-                port:     proxy.port,
-                type:     5,
-                userId:   proxy.username,
-                password: proxy.password,
-              },
-              command:     'connect',
-              destination: { host: SERVER_HOST, port: SERVER_PORT },
-              existing_socket: sock,
-            }).then(({ socket }) => {
-              this._log(id, `SOCKS5 tunnel established via ${proxy.host}:${proxy.port}`);
-              if (cb) socket.once('connect', cb);
-            }).catch(err => {
-              this._log(id, `SOCKS5 error: ${err.message} — direct fallback`);
-              net.connect = originalConnect;
-              if (this.proxyManager && !this.staticProxy) this.proxyManager.markFailed(proxy.host, proxy.port);
-              const fallback = originalConnect(opts, cb);
-              fallback.on('error', e => this._log(id, `Fallback error: ${e.message}`));
-            });
-            return sock;
-          }
-          return originalConnect(opts, cb);
-        };
-      }
-
-      bot = mineflayer.createBot(botOptions);
+        ...(connectFn ? { connect: connectFn } : {}),
+      });
     } catch (err) {
       this._log(id, `Spawn error: ${err.message}`);
       this._scheduleReconnect(id);
@@ -230,9 +154,25 @@ class BotManager {
       });
       try { bot.pathfinder.setGoal(null); } catch (_) {}
 
-      // Auth triggered only by ANTIBOT clear message — no fixed timer.
-      // Bot stays fully frozen until server confirms verification passed.
-      this._log(id, 'Waiting for ANTIBOT clear message before any action');
+      // Wait then auth — only if ANTIBOT hasn't kicked us first
+      setTimeout(() => {
+        if (!this.bots[id]) return;
+        this.meta[id].status = 'authing';
+        this._log(id, 'Auth delay elapsed — sending credentials');
+        if (!this.meta[id].registered) {
+          bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`);
+          this._log(id, 'Sent /register');
+          this.meta[id].registered = true;
+          setTimeout(() => {
+            if (!this.bots[id]) return;
+            bot.chat(`/login ${BOT_PASSWORD}`);
+            this._log(id, 'Sent /login');
+          }, 1500);
+        } else {
+          bot.chat(`/login ${BOT_PASSWORD}`);
+          this._log(id, 'Sent /login');
+        }
+      }, AUTH_DELAY);
     });
 
     // ── Message listener ──────────────────────────────────────
@@ -252,22 +192,18 @@ class BotManager {
         this._log(id, 'ANTIBOT: movement lock confirmed');
       }
 
-      // ANTIBOT clear — trigger auth immediately after clearance
+      // ANTIBOT clear
       if (this.meta[id].antiBotLocked &&
           /verified|you have passed|verification (complete|passed|successful)|you may (now )?move|bot.?check passed/i.test(text)) {
         this.meta[id].antiBotLocked = false;
-        this._log(id, 'ANTIBOT: cleared — movement unlocked, triggering auth');
-        clearTimeout(this.meta[id]._authFallback);
-        // Small delay so server finishes its own state update before we send chat
-        setTimeout(() => this._doAuth(id, bot), 800);
+        this._log(id, 'ANTIBOT: cleared — movement unlocked');
       }
 
-      // Registration success — bot stays still, no /login sent
-      if (/registered|successfully registered|you are now registered|logged in|successfully authenticated|you are now logged/i.test(text)) {
+      // Auth success — stand still, DO NOT route to /server banana automatically
+      if (/logged in|successfully authenticated|you are now logged/i.test(text)) {
         this.meta[id].status = 'online ✓';
-        this.meta[id].captchaPending = false;
-        this._log(id, 'Registered/authed — bot standing still');
-        // Bot just stands. No /login. No /server banana. No movement.
+        this._log(id, 'Authenticated — bot standing still (no auto-routing)');
+        // No /server banana. No anti-AFK walk. Bot just stands.
       }
 
       if (/wrong password|incorrect password/i.test(text)) {
@@ -364,57 +300,8 @@ class BotManager {
     try {
       bot.chat(cmd);
       this._log(id, `[CMD] ${cmd}`);
-      // If captcha is pending, this cmd is the captcha answer
-      // Auto-send /register immediately after
-      if (this.meta[id].captchaPending) {
-        this._log(id, 'Captcha answer sent — auto-registering');
-        setTimeout(() => this._register(id, bot), 4500);
-      }
       return { ok: true };
     } catch (e) { return { error: e.message }; }
-  }
-
-  // ── Auth helper — called after ANTIBOT clears ───────────────
-  // Flow: ANTIBOT clear → wait for captcha (manual) → /register only
-  // Bot stays frozen until captcha is submitted via UI, then registers.
-  _doAuth(id, bot) {
-    if (!this.bots[id] || !this.meta[id]) return;
-    if (this.meta[id].antiBotLocked) {
-      this._log(id, '_doAuth skipped — still locked');
-      return;
-    }
-    const isCustom = this.accounts[id]?.custom;
-    const pwd      = (isCustom && this.accounts[id]?.password) ? this.accounts[id].password : BOT_PASSWORD;
-
-    if (isCustom) {
-      // Personal account — already registered, just /login
-      this.meta[id].status = 'logging in';
-      this._log(id, 'Custom account — sending /login');
-      try { bot.chat(`/login ${pwd}`); } catch (_) {}
-    } else {
-      // Random bot — wait for captcha solve via UI
-      this.meta[id].status = 'waiting for captcha';
-      this.meta[id].captchaPending = true;
-      this._log(id, 'ANTIBOT cleared — bot frozen, waiting for captcha solve via UI');
-    }
-  }
-
-  // Called by runCommand when captcha answer is submitted
-  // After captcha answer is sent, send /register — no /login
-  _register(id, bot) {
-    if (!this.bots[id] || !this.meta[id]) return;
-    if (this.meta[id].registered) {
-      this._log(id, 'Already registered — no action');
-      return;
-    }
-    this.meta[id].status = 'registering';
-    this.meta[id].captchaPending = false;
-    const acctPwd = (this.accounts[id]?.custom && this.accounts[id]?.password)
-      ? this.accounts[id].password
-      : BOT_PASSWORD;
-    try { bot.chat(`/register ${acctPwd} ${acctPwd}`); } catch (_) {}
-    this._log(id, 'Sent /register — done, no /login');
-    this.meta[id].registered = true;
   }
 
   getCaptchaImage(id) {
@@ -434,7 +321,6 @@ class BotManager {
       reconnects:    this.meta[id]?.reconnects || 0,
       captchaImage:  this.meta[id]?.captchaImage || null,
       antiBotLocked: this.meta[id]?.antiBotLocked || false,
-      custom:        this.accounts[id]?.custom || false,
       uptime:        Math.floor((Date.now() - (this.meta[id]?.created || Date.now())) / 1000),
     }));
   }
