@@ -46,6 +46,20 @@ app.post('/bot/:id/cmd',     auth, (req, res) => {
 // Captcha image fetch
 app.get('/bot/:id/captcha',  auth, (req, res) => res.json(manager.getCaptchaImage(req.params.id)));
 
+// ── Custom account routes ────────────────────────────────────────
+app.post('/account/add', auth, (req, res) => {
+  const { username, password } = req.body;
+  res.json(manager.addCustomAccount(username, password));
+});
+
+app.post('/account/:id/connect', auth, (req, res) => {
+  res.json(manager.connectCustomAccount(req.params.id));
+});
+
+app.delete('/account/:id', auth, (req, res) => {
+  res.json(manager.removeCustomAccount(req.params.id));
+});
+
 // ── Proxy routes ──────────────────────────────────────────────────
 
 // Webshare pool

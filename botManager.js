@@ -87,6 +87,62 @@ class BotManager {
     return { success: true, created };
   }
 
+  // ── Custom (personal) accounts ───────────────────────────────
+  addCustomAccount(username, password) {
+    username = username.trim();
+    password = (password || '').trim();
+    if (!username) return { error: 'username required' };
+    if (this.accounts[username]) return { error: `Account already exists: ${username}` };
+
+    this.accounts[username] = {
+      username,
+      password: password || null,
+      custom:   true,
+      created:  Date.now(),
+    };
+    this.meta[username] = {
+      username,
+      status:           'idle — click Connect',
+      created:          Date.now(),
+      reconnects:       0,
+      autoRejoin:       false,
+      registered:       true,   // personal acc is already registered on server
+      verificationKick: false,
+      inBanana:         false,
+      captchaPending:   false,
+      antiBotLocked:    false,
+      captchaImage:     null,
+      proxy:            null,
+      _spawnTime:       0,
+      custom:           true,
+    };
+    this.logs[username] = [];
+    return { success: true, id: username };
+  }
+
+  connectCustomAccount(id) {
+    if (!this.accounts[id])         return { error: `Account not found: ${id}` };
+    if (!this.accounts[id].custom)  return { error: 'Use /reconnect for random bots' };
+    if (this.bots[id])              return { error: 'Already connected' };
+    this.meta[id].status = 'connecting';
+    this._proxyReady
+      .then(() => this._spawnBot(id))
+      .catch(err => this._log(id, `Connect error: ${err.message}`));
+    return { success: true };
+  }
+
+  removeCustomAccount(id) {
+    if (!this.accounts[id]) return { error: `Not found: ${id}` };
+    if (this.bots[id]) { try { this.bots[id].quit(); } catch (_) {} }
+    this._cleanup(id);
+    clearTimeout(this.timers[id]);
+    delete this.accounts[id];
+    delete this.meta[id];
+    delete this.logs[id];
+    delete this.timers[id];
+    return { success: true };
+  }
+
   // ── Spawn ─────────────────────────────────────────────────────
   async _spawnBot(id) {
     try {
@@ -327,10 +383,20 @@ class BotManager {
       this._log(id, '_doAuth skipped — still locked');
       return;
     }
-    // Don't send anything yet — wait for captcha to be solved manually
-    this.meta[id].status = 'waiting for captcha';
-    this.meta[id].captchaPending = true;
-    this._log(id, 'ANTIBOT cleared — bot frozen, waiting for captcha solve via UI');
+    const isCustom = this.accounts[id]?.custom;
+    const pwd      = (isCustom && this.accounts[id]?.password) ? this.accounts[id].password : BOT_PASSWORD;
+
+    if (isCustom) {
+      // Personal account — already registered, just /login
+      this.meta[id].status = 'logging in';
+      this._log(id, 'Custom account — sending /login');
+      try { bot.chat(`/login ${pwd}`); } catch (_) {}
+    } else {
+      // Random bot — wait for captcha solve via UI
+      this.meta[id].status = 'waiting for captcha';
+      this.meta[id].captchaPending = true;
+      this._log(id, 'ANTIBOT cleared — bot frozen, waiting for captcha solve via UI');
+    }
   }
 
   // Called by runCommand when captcha answer is submitted
@@ -343,7 +409,10 @@ class BotManager {
     }
     this.meta[id].status = 'registering';
     this.meta[id].captchaPending = false;
-    try { bot.chat(`/register ${BOT_PASSWORD} ${BOT_PASSWORD}`); } catch (_) {}
+    const acctPwd = (this.accounts[id]?.custom && this.accounts[id]?.password)
+      ? this.accounts[id].password
+      : BOT_PASSWORD;
+    try { bot.chat(`/register ${acctPwd} ${acctPwd}`); } catch (_) {}
     this._log(id, 'Sent /register — done, no /login');
     this.meta[id].registered = true;
   }
@@ -365,6 +434,7 @@ class BotManager {
       reconnects:    this.meta[id]?.reconnects || 0,
       captchaImage:  this.meta[id]?.captchaImage || null,
       antiBotLocked: this.meta[id]?.antiBotLocked || false,
+      custom:        this.accounts[id]?.custom || false,
       uptime:        Math.floor((Date.now() - (this.meta[id]?.created || Date.now())) / 1000),
     }));
   }
