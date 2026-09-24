@@ -74,6 +74,7 @@
   .empty { color:#2a2a2a; text-align:center; padding:24px; font-size:0.82rem; }
   .refresh-badge { font-size:0.68rem; color:#333; margin-left:auto; }
   .cap-badge { display:inline-block; background:#5a1e00; color:#ffa726; font-size:0.62rem; padding:2px 5px; border-radius:3px; margin-left:4px; animation:pulse 1s infinite; }
+  .custom-badge { display:inline-block; background:#0d2a4a; color:#64b5f6; font-size:0.6rem; padding:1px 4px; border-radius:3px; margin-left:4px; }
 </style>
 </head>
 <body>
@@ -141,6 +142,19 @@
       <button class="danger" onclick="killAll()">☠ Kill All</button>
       <button class="sec" onclick="refresh()">↻ Refresh</button>
     </div>
+  </div>
+
+  <div class="panel">
+    <h2>Custom Accounts</h2>
+    <label>Username</label>
+    <input id="caUser" placeholder="YourUsername">
+    <label>Password</label>
+    <input id="caPass" type="password" placeholder="YourPassword">
+    <div class="btn-row" style="margin-bottom:8px;">
+      <button onclick="addCustomAcc()">➕ Add Account</button>
+    </div>
+    <div id="caResult" style="font-size:0.72rem;color:#4caf50;min-height:16px;margin-bottom:8px;"></div>
+    <div id="caList"></div>
   </div>
 
   <div class="panel">
@@ -424,7 +438,8 @@ async function refresh() {
 
   tbody.innerHTML=accounts.map(a=>{
     const dc=dotCls(a.status);
-    const badge=a.captchaImage?'<span class="cap-badge">CAPTCHA</span>':'';
+    const badge=(a.captchaImage?'<span class="cap-badge">CAPTCHA</span>':'')+
+           (a.custom?'<span class="custom-badge">CUSTOM</span>':'');
     return '<tr>'+
       '<td><span class="dot '+dc+'"></span><span class="st '+dc+'">'+a.status+'</span>'+badge+'</td>'+
       '<td class="uname">'+a.username+'</td>'+
@@ -440,6 +455,7 @@ async function refresh() {
     '</tr>';
   }).join('');
 
+  renderCustomAccounts(accounts);
   loadProxyStats();
   const logId=document.getElementById('logId').value.trim();
   if (logId) fetchLogs(logId);
@@ -447,6 +463,58 @@ async function refresh() {
 
 function selectBot(id) {
   ['cmdTarget','captchaTarget','chatId','logId'].forEach(f=>document.getElementById(f).value=id);
+}
+
+// ── Custom accounts ──────────────────────────────────────────────
+async function addCustomAcc() {
+  const user = document.getElementById('caUser').value.trim();
+  const pass = document.getElementById('caPass').value.trim();
+  if (!user) return showCAMsg('Enter a username', true);
+  const d = await fetch('/account/add',{method:'POST',headers:H(),body:JSON.stringify({username:user,password:pass})}).then(r=>r.json());
+  if (d.error) return showCAMsg('✗ '+d.error, true);
+  showCAMsg('✔ Added: '+user, false);
+  document.getElementById('caUser').value='';
+  document.getElementById('caPass').value='';
+  refresh();
+}
+
+async function connectCustomAcc(id) {
+  const d = await fetch('/account/'+encodeURIComponent(id)+'/connect',{method:'POST',headers:H()}).then(r=>r.json());
+  if (d.error) return alert(d.error);
+  refresh();
+}
+
+async function removeCustomAcc(id) {
+  if (!confirm('Remove '+id+'?')) return;
+  await fetch('/account/'+encodeURIComponent(id),{method:'DELETE',headers:H()});
+  refresh();
+}
+
+function showCAMsg(msg, err) {
+  const e=document.getElementById('caResult');
+  e.textContent=msg; e.style.color=err?'#ef5350':'#4caf50';
+  setTimeout(()=>{e.textContent='';},4000);
+}
+
+function renderCustomAccounts(accounts) {
+  const customs=accounts.filter(a=>a.custom);
+  const el=document.getElementById('caList');
+  if (!el) return;
+  if (!customs.length) {
+    el.innerHTML='<div style="font-size:0.72rem;color:#333;">No custom accounts yet.</div>';
+    return;
+  }
+  el.innerHTML=customs.map(a=>{
+    const dc=dotCls(a.status);
+    return '<div style="display:flex;align-items:center;gap:6px;padding:6px 0;border-bottom:1px solid #151515;">'+
+      '<span class="dot '+dc+'"></span>'+
+      '<span style="color:#b2dfdb;font-size:0.8rem;flex:1;">'+a.username+'</span>'+
+      '<span style="color:#444;font-size:0.68rem;">'+a.status+'</span>'+
+      '<button class="sm blue"   onclick="connectCustomAcc(''+a.id+'')">▶</button>'+
+      '<button class="sm sec"    onclick="selectBot(''+a.id+'')">Cmd</button>'+
+      '<button class="sm danger" onclick="removeCustomAcc(''+a.id+'')">✕</button>'+
+    '</div>';
+  }).join('');
 }
 
 setInterval(refresh,6000);
