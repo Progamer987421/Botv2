@@ -4,7 +4,7 @@ const { GoalBlock } = goals;
 const { SocksClient } = require('socks');
 const ProxyManager = require('./proxyManager');
 
-const SERVER_HOST    = 'play.applemc.fun';
+const SERVER_HOST    = 'play.applemc.net';
 const SERVER_PORT    = 25565;
 const SERVER_VERSION = '1.20.1';
 const BOT_PASSWORD   = '231182';
